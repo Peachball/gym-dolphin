@@ -29,15 +29,15 @@ controller_space = spaces.Tuple((button_space, main_stick_space, c_stick_space))
 
 def realController(control):
   button, main, c = control
-  
+
   controller = ssbm.RealControllerState()
 
   if button < len(buttons):
     setattr(controller, 'button_' + buttons[button], True)
-  
+
   controller.stick_MAIN = tuple(main)
   controller.stick_C = c_directions[c]
-  
+
   return controller
 
 class BoolConv:
@@ -58,7 +58,7 @@ class RealConv:
     self.high = high
     self.space = spaces.Box(low, high, [1])
     self.verbose = verbose
-  
+
   def __call__(self, x, name=None):
     if self.low > x or x > self.high:
       if self.verbose:
@@ -69,7 +69,7 @@ class RealConv:
 class DiscreteConv:
   def __init__(self, size):
     self.space = spaces.Discrete(size)
-  
+
   def __call__(self, x, name=None, verbose=True):
     if 0 > x or x >= self.space.n:
       if verbose:
@@ -80,9 +80,9 @@ class DiscreteConv:
 class StructConv:
   def __init__(self, spec):
     self.spec = spec
-    
+
     self.space = spaces.Tuple([conv.space for _, conv in spec])
-  
+
   def __call__(self, struct, **kwargs):
     return [conv(getattr(struct, name), name=name) for name, conv in self.spec]
 
@@ -90,9 +90,9 @@ class ArrayConv:
   def __init__(self, conv, permutation):
     self.conv = conv
     self.permutation = permutation
-    
+
     self.space = spaces.Tuple([conv.space for _ in permutation])
-  
+
   def __call__(self, array, **kwargs):
     return [self.conv(array[i]) for i in self.permutation]
 
@@ -132,7 +132,7 @@ def gameSpec(self=0, enemy=1, swap=False):
   players = [self, enemy]
   if swap:
     players.reverse()
-  
+
   return [
     ('players', ArrayConv(playerConv, players)),
     ('stage', DiscreteConv(32)),
@@ -152,21 +152,21 @@ class SSBMEnv(gym.Env, Default):
     #Option('enemy_reload', type=int, default=0, help="enemy reload interval"),
     Option('cpu', type=int, default=1, help="enemy cpu level"),
   ] + [Option('p%d' % i, type=str, choices=characters.keys(), default="falcon", help="character for player %d" % i) for i in [1, 2]]
-  
+
   _members = [
     ('dolphinRunner', DolphinRunner)
   ]
 
   def __init__(self, **kwargs):
     Default.__init__(self, init_members=False, **kwargs)
-    
+
     self.observation_space = gameConv.space
     self.action_space = controller_space
     self.realController = realController
-    
+
     self.first_frame = True
     self.toggle = False
-    
+
     self.prev_state = ssbm.GameMemory()
     self.state = ssbm.GameMemory()
     # track players 1 and 2 (pids 0 and 1)
@@ -175,12 +175,12 @@ class SSBMEnv(gym.Env, Default):
     self.pids = [1]
     self.cpus = {1: None}
     self.characters = {1: self.p2}
-    
+
     if self.cpu:
       self.pids.append(0)
       self.cpus[0] = self.cpu
       self.characters[0] = self.p1
-    
+
     self._init_members(cpus=self.pids, **kwargs)
     self.user = self.dolphinRunner.user
 
@@ -190,26 +190,26 @@ class SSBMEnv(gym.Env, Default):
     if self.zmq:
       mwType = memory_watcher.MemoryWatcherZMQ
     self.mw = mwType(self.user + '/MemoryWatcher/MemoryWatcher')
-    
+
     pipe_dir = self.user + '/Pipes/'
     print('Creating Pads at %s.' % pipe_dir)
     os.makedirs(self.user + '/Pipes/', exist_ok=True)
 
     paths = [pipe_dir + 'phillip%d' % i for i in self.pids]
     self.get_pads = util.async_map(Pad, paths)
-    
+
     time.sleep(2) # give pads time to set up
-    
+
     self.dolphin_process = self.dolphinRunner()
-    
+
     time.sleep(2) # let dolphin connect to the memory watcher
-    
+
     try:
       self.pads = self.get_pads()
     except KeyboardInterrupt:
       print("Pipes not initialized!")
       return
-    
+
     self.setup()
 
   def write_locations(self):
@@ -218,12 +218,12 @@ class SSBMEnv(gym.Env, Default):
     print('Writing locations to:', path)
     with open(path + 'Locations.txt', 'w') as f:
       f.write('\n'.join(self.sm.locations()))
-  
+
   def _close(self):
     self.dolphin_process.terminate()
     import shutil
     shutil.rmtree(self.user)
-  
+
   def update_state(self):
     ctutil.copy(self.state, self.prev_state)
     messages = self.mw.get_messages()
@@ -232,19 +232,19 @@ class SSBMEnv(gym.Env, Default):
 
   def setup(self):
     self.update_state()
-    
+
     pick_chars = []
-    
+
     tapA = [
       (0, movie.pushButton(Button.A)),
       (0, movie.releaseButton(Button.A)),
     ]
-    
+
     for pid, pad in zip(self.pids, self.pads):
       actions = []
-      
+
       cpu = self.cpus[pid]
-      
+
       if cpu:
         actions.append(MoveTo([0, 20], pid, pad, True))
         actions.append(movie.Movie(tapA, pad))
@@ -254,43 +254,43 @@ class SSBMEnv(gym.Env, Default):
         actions.append(MoveTo([cpu * 1.1, 0], pid, pad, True))
         actions.append(movie.Movie(tapA, pad))
         #actions.append(Wait(10000))
-      
+
       actions.append(MoveTo(characters[self.characters[pid]], pid, pad))
       actions.append(movie.Movie(tapA, pad))
-      
+
       pick_chars.append(Sequential(*actions))
-    
+
     pick_chars = Parallel(*pick_chars)
-    
+
     enter_settings = Sequential(
         MoveTo(settings, self.pids[0], self.pads[0]),
         movie.Movie(tapA, self.pads[0])
     )
-    
+
     # sets the game mode and picks the stage
     start_game = movie.Movie(movie.endless_netplay + movie.stages[self.stage], self.pads[0])
-    
+
     self.navigate_menus = Sequential(pick_chars, enter_settings, start_game)
-    
+
     char_stages = [menu.value for menu in [Menu.Characters, Menu.Stages]]
-    
+
     print("Navigating menus.")
     while self.state.menu in char_stages:
       self.mw.advance()
       last_frame = self.state.frame
       self.update_state()
-      
+
       if self.state.frame > last_frame:
         self.navigate_menus.move(self.state)
-        
+
         if self.navigate_menus.done():
           for pid, pad in zip(self.pids, self.pads):
             if self.characters[pid] == 'sheik':
               pad.press_button(Button.A)
-    
+
     print("setup finished")
     assert(self.state.menu == Menu.Game.value)
-    
+
     # get rid of weird initial conditions
     for _ in range(10):
       self.mw.advance()
@@ -304,12 +304,12 @@ class SSBMEnv(gym.Env, Default):
   def _step(self, action):
     #import ipdb; ipdb.set_trace()
     #assert self.action_space.contains(action), "%r (%s) invalid" % (action, type(action))
-    
+
     self.pads[0].send_controller(self.realController(action))
-    
+
     self.mw.advance()
     self.update_state()
-    
+
     observation = gameConv(self.state)
     reward = computeRewards([self.prev_state, self.state])[0]
 
@@ -317,20 +317,20 @@ class SSBMEnv(gym.Env, Default):
 
   def _reset(self):
     return gameConv(self.state)
-  
+
   #def _render(self):
   #  pass
 
 def simpleSSBMEnv(act_every=3, **kwargs):
   env = SSBMEnv(**kwargs)
-  
+
   # TODO: make this a wrapper
   env.action_space = spaces.Discrete(len(ssbm.simpleControllerStates))
   env.realController = lambda action: ssbm.simpleControllerStates[action].realController()
 
   from .box_wrapper import BoxWrapper
   env = BoxWrapper(env)
-  
+
   from gym.wrappers import SkipWrapper
   return SkipWrapper(3)(env)
 
